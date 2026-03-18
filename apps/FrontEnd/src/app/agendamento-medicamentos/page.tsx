@@ -68,13 +68,17 @@ interface FormPrescricaoMedicamento {
   /** Data de início do tratamento (yyyy-mm-dd para input type="date") */
   dataInicioTratamento: string;
   posologia: string;
-  /** Intervalo entre doses em horas (Cada h) */
+  /** Intervalo entre doses (em horas ou em dias, conforme intervaloUnidade) */
   cadaHoras: string;
+  /** Unidade do intervalo: hora ou dia */
+  intervaloUnidade: 'hora' | 'dia';
+  /** Quando intervaloUnidade="dia": hora padrão (HH:mm) aplicada a todos os dias */
+  horaPadraoDia: string;
   /** Vezes por dia */
   vezesPorDia: string;
   /** Duração em dias */
   duracaoDias: string;
-  /** Horários das tomadas (HH:mm), um por vez/dia */
+  /** Quando intervaloUnidade="hora": horários (HH:mm). Quando "dia": dias (1..duracao) em string. */
   horariosTomadas: string[];
 }
 
@@ -167,6 +171,38 @@ function sugerirHorariosTomadas(cadaHoras: number, vezesPorDia: number): string[
     result.push(`${hh}:00`);
   }
   return result;
+}
+
+function sugerirDiasTomadas(intervaloDias: number, duracaoDias: number): string[] {
+  const intervalo = Math.max(1, Math.floor(intervaloDias || 0) || 1);
+  const dur = Math.max(1, Math.floor(duracaoDias || 0) || 1);
+  const dias: string[] = [];
+  for (let d = 1; d <= dur; d += intervalo) dias.push(String(d));
+  return dias;
+}
+
+function gerarHorariosISOIntervaloDias(
+  dataInicioYmd: string,
+  duracaoDias: number,
+  intervaloDias: number,
+  hora: string = '08:00'
+): string[] {
+  const dur = Math.max(1, Math.floor(duracaoDias || 0) || 1);
+  const intervalo = Math.max(1, Math.floor(intervaloDias || 0) || 1);
+  const base = new Date(`${dataInicioYmd}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return [];
+  const out: string[] = [];
+  for (let offset = 0; offset < dur; offset += intervalo) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + offset);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const ymd = `${y}-${m}-${day}`;
+    const iso = gerarHorariosISO(ymd, 1, [hora]);
+    if (iso[0]) out.push(iso[0]);
+  }
+  return out;
 }
 
 /** Ordena horários primeiro por dia, depois por hora (cronológico). */
@@ -371,6 +407,8 @@ export default function AgendamentoMedicamentosPage() {
       dataInicioTratamento: getDataHojeYmd(),
       posologia: String(rm.posologia ?? ''),
       cadaHoras: String(Math.round(cadaHoras)),
+      intervaloUnidade: 'hora',
+      horaPadraoDia: '08:00',
       vezesPorDia: String(vezesPorDia),
       duracaoDias: rm.duracao_dias != null ? String(rm.duracao_dias) : '7',
       horariosTomadas: sugerirHorariosTomadas(cadaHoras, vezesPorDia),
@@ -382,6 +420,12 @@ export default function AgendamentoMedicamentosPage() {
     const overrides = prescricaoForm[String(rm.id)];
     if (!overrides) return base;
     const merged = { ...base, ...overrides };
+    if (merged.intervaloUnidade === 'dia') {
+      const dur = Math.max(1, parseInt(merged.duracaoDias, 10) || 1);
+      const intervalo = Math.max(1, parseInt(merged.cadaHoras, 10) || 1);
+      const dias = merged.horariosTomadas?.length ? merged.horariosTomadas : sugerirDiasTomadas(intervalo, dur);
+      return { ...merged, vezesPorDia: '1', horariosTomadas: dias };
+    }
     const n = Math.max(0, parseInt(merged.vezesPorDia, 10) || 0);
     const horarios = Array.from({ length: n }, (_, i) => merged.horariosTomadas[i] ?? '');
     return { ...merged, horariosTomadas: horarios };
@@ -407,8 +451,32 @@ export default function AgendamentoMedicamentosPage() {
         next.horariosTomadas = horarios;
       }
 
-      // Atualiza horários das tomadas com base em Cada (h) e Vezes/dia quando um deles muda
-      if (field === 'vezesPorDia' || field === 'cadaHoras') {
+      // Troca unidade (hora/dia)
+      if (field === 'intervaloUnidade') {
+        const unidade = String(value) === 'dia' ? 'dia' : 'hora';
+        next.intervaloUnidade = unidade;
+        if (unidade === 'dia') {
+          const intervalo = Math.max(1, parseInt(String(next.cadaHoras ?? current.cadaHoras), 10) || 1);
+          const dur = Math.max(1, parseInt(String(next.duracaoDias ?? current.duracaoDias), 10) || 1);
+          next.vezesPorDia = '1';
+          next.horaPadraoDia = next.horaPadraoDia ?? current.horaPadraoDia ?? '08:00';
+          next.horariosTomadas = sugerirDiasTomadas(intervalo, dur);
+        } else {
+          const cada = Math.max(1, parseInt(String(next.cadaHoras ?? current.cadaHoras), 10) || 1);
+          const vezes = Math.max(1, parseInt(String(next.vezesPorDia ?? current.vezesPorDia), 10) || 1);
+          next.horariosTomadas = sugerirHorariosTomadas(cada, vezes);
+        }
+      }
+
+      // Recalcula tomadas quando muda intervalo/vezes/duração
+      const unidadeAtual = next.intervaloUnidade ?? current.intervaloUnidade ?? 'hora';
+      if (unidadeAtual === 'dia' && (field === 'cadaHoras' || field === 'duracaoDias')) {
+        const intervalo = Math.max(1, parseInt(String(field === 'cadaHoras' ? value : next.cadaHoras), 10) || 1);
+        const dur = Math.max(1, parseInt(String(field === 'duracaoDias' ? value : next.duracaoDias), 10) || 1);
+        next.vezesPorDia = '1';
+        next.horariosTomadas = sugerirDiasTomadas(intervalo, dur);
+      }
+      if (unidadeAtual === 'hora' && (field === 'vezesPorDia' || field === 'cadaHoras')) {
         const cada = field === 'cadaHoras' ? Number(value) : Number(next.cadaHoras ?? current.cadaHoras);
         const vezes = field === 'vezesPorDia' ? Number(value) : Number(next.vezesPorDia ?? current.vezesPorDia);
         next.horariosTomadas = sugerirHorariosTomadas(cada, vezes);
@@ -541,12 +609,15 @@ export default function AgendamentoMedicamentosPage() {
       const form = getFormForRm(rm);
       const cadaHoras = Math.max(0, parseInt(form.cadaHoras, 10) || 0);
       const duracaoDias = Math.max(0, parseInt(form.duracaoDias, 10) || 0);
+      const unidade = form.intervaloUnidade ?? 'hora';
       const horariosPreenchidos = form.horariosTomadas.filter((h) => h?.trim());
       if (horariosPreenchidos.length === 0 || duracaoDias < 1 || !form.dataInicioTratamento?.trim()) continue;
-      const validacao = validarIntervaloHorarios(horariosPreenchidos, cadaHoras);
-      if (!validacao.valido) {
-        toast.error(validacao.mensagem);
-        throw new Error(validacao.mensagem);
+      if (unidade === 'hora') {
+        const validacao = validarIntervaloHorarios(horariosPreenchidos, cadaHoras);
+        if (!validacao.valido) {
+          toast.error(validacao.mensagem);
+          throw new Error(validacao.mensagem);
+        }
       }
     }
     try {
@@ -554,7 +625,8 @@ export default function AgendamentoMedicamentosPage() {
         paraSalvar.map(async (rm) => {
           const form = getFormForRm(rm);
           const duracaoDias = Math.max(0, parseInt(form.duracaoDias, 10) || 0);
-          const vezesPorDia = Math.max(0, parseInt(form.vezesPorDia, 10) || 0);
+          const unidade = form.intervaloUnidade ?? 'hora';
+          const vezesPorDia = unidade === 'dia' ? 1 : Math.max(0, parseInt(form.vezesPorDia, 10) || 0);
           const horariosPreenchidos = form.horariosTomadas.filter((h) => h?.trim());
           if (horariosPreenchidos.length === 0 || duracaoDias < 1 || !form.dataInicioTratamento?.trim()) return;
 
@@ -565,11 +637,15 @@ export default function AgendamentoMedicamentosPage() {
             observacao: null,
           });
 
-          const horariosISO = gerarHorariosISO(
-            form.dataInicioTratamento.trim(),
-            duracaoDias,
-            horariosPreenchidos
-          );
+          const horariosISO =
+            unidade === 'dia'
+              ? gerarHorariosISOIntervaloDias(
+                  form.dataInicioTratamento.trim(),
+                  duracaoDias,
+                  Math.max(1, parseInt(form.cadaHoras, 10) || 1),
+                  form.horaPadraoDia || '08:00'
+                )
+              : gerarHorariosISO(form.dataInicioTratamento.trim(), duracaoDias, horariosPreenchidos);
           await Promise.all(
             horariosISO.map((dataDisparo) =>
               api.post('/receita-horarios', {
@@ -593,7 +669,8 @@ export default function AgendamentoMedicamentosPage() {
     if (!rm) return;
     const form = getFormForRm(rm);
     const duracaoDias = Math.max(0, parseInt(form.duracaoDias, 10) || 0);
-    const vezesPorDia = Math.max(0, parseInt(form.vezesPorDia, 10) || 0);
+    const unidade = form.intervaloUnidade ?? 'hora';
+    const vezesPorDia = unidade === 'dia' ? 1 : Math.max(0, parseInt(form.vezesPorDia, 10) || 0);
     const horariosPreenchidos = form.horariosTomadas.filter((h) => h?.trim());
     const cadaHorasNum = Math.max(0, parseInt(form.cadaHoras, 10) || 0);
     if (horariosPreenchidos.length === 0 || duracaoDias < 1 || !form.dataInicioTratamento?.trim()) {
@@ -601,10 +678,12 @@ export default function AgendamentoMedicamentosPage() {
       toast.error(msg);
       throw new Error(msg);
     }
-    const validacao = validarIntervaloHorarios(horariosPreenchidos, cadaHorasNum);
-    if (!validacao.valido) {
-      toast.error(validacao.mensagem);
-      throw new Error(validacao.mensagem);
+    if (unidade === 'hora') {
+      const validacao = validarIntervaloHorarios(horariosPreenchidos, cadaHorasNum);
+      if (!validacao.valido) {
+        toast.error(validacao.mensagem);
+        throw new Error(validacao.mensagem);
+      }
     }
     try {
       const existentes = horariosPorRm(rmId);
@@ -619,7 +698,15 @@ export default function AgendamentoMedicamentosPage() {
         duracao_dias: duracaoDias,
         observacao: null,
       });
-      const horariosISO = gerarHorariosISO(form.dataInicioTratamento.trim(), duracaoDias, horariosPreenchidos);
+      const horariosISO =
+        unidade === 'dia'
+          ? gerarHorariosISOIntervaloDias(
+              form.dataInicioTratamento.trim(),
+              duracaoDias,
+              Math.max(1, parseInt(form.cadaHoras, 10) || 1),
+              form.horaPadraoDia || '08:00'
+            )
+          : gerarHorariosISO(form.dataInicioTratamento.trim(), duracaoDias, horariosPreenchidos);
       await Promise.all(
         horariosISO.map((dataDisparo) =>
           api.post('/receita-horarios', {
@@ -994,8 +1081,8 @@ export default function AgendamentoMedicamentosPage() {
                               Cartão SUS: {selectedPaciente.cartao_sus}
                             </span>
                           )}
-                          {(selectedPacienteCelular?.numero_contato || selectedPaciente?.celular) && (
-                            <div className="flex items-center gap-1">
+                          {(selectedPacienteCelular?.numero_contato || selectedPaciente?.celular || selectedReceita) && (
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                               <span className="text-xs sm:text-sm text-muted-foreground leading-none">
                                 Telefone: {selectedPacienteCelular?.numero_contato ?? selectedPaciente?.celular}
                               </span>
@@ -1014,25 +1101,29 @@ export default function AgendamentoMedicamentosPage() {
                               >
                                 <Edit2 className="h-3 w-3" />
                               </Button>
+                              {selectedReceita && (
+                                <span className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground leading-none">
+                                  <Calendar className="h-4 w-4 shrink-0" />
+                                  Receita: {formatarData(selectedReceita.data_receita)}
+                                </span>
+                              )}
                             </div>
                           )}
                         </>
                       )}
                       {selectedReceita && (
-                        <span className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground leading-none pb-[1px]">
-                          <Calendar className="h-4 w-4 shrink-0" />
-                          Receita: {formatarData(selectedReceita.data_receita)}
+                        <div className="ml-auto flex items-center">
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="h-6 w-6 text-muted-foreground hover:text-primary"
+                            className="h-10 w-10 border-border/70 text-foreground hover:text-primary"
                             onClick={() => setAdicionarMedicamentoDialogOpen(true)}
                             aria-label="Adicionar medicamento à receita"
                             title="Adicionar medicamento à receita"
                           >
-                            <Plus className="h-4 w-4" />
+                            <Plus className="h-6 w-6" />
                           </Button>
-                        </span>
+                        </div>
                       )}
                     </div>
                     {selectedPaciente && !selectedPacienteCelular?.numero_contato && !selectedPaciente?.celular && (
@@ -1111,18 +1202,18 @@ export default function AgendamentoMedicamentosPage() {
                               />
                             </div>
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="icon"
-                              className="shrink-0 text-muted-foreground hover:text-primary"
+                              className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-primary"
                               onClick={() => setAndamentoDialogRmId(String(rm.id))}
                               title="Visualizar andamento da receita"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="icon"
-                              className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                              className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-destructive"
                               onClick={() => {
                                 setRemoveMedicamentoTarget(rm);
                                 setRemoveMedicamentoDialogOpen(true);
@@ -1147,22 +1238,52 @@ export default function AgendamentoMedicamentosPage() {
                             INTERVALO E DURAÇÃO
                           </h4>
                           <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-                            {(['duracaoDias', 'cadaHoras', 'vezesPorDia'] as const).map((field) => (
-                              <div key={field} className="grid gap-2 w-[4.5rem] flex-shrink-0">
-                                <Label className="text-muted-foreground text-sm">
-                                  {field === 'cadaHoras' ? 'Cada (h)' : field === 'vezesPorDia' ? 'Vezes/dia' : 'Duração (d)'}
-                                </Label>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={field === 'duracaoDias' ? undefined : 24}
-                                  value={formData[field]}
-                                  onChange={(e) => updateFormForRm(rm, field, e.target.value)}
-                                  className="border rounded-md text-center"
-                                />
+                            {(['duracaoDias', 'cadaHoras', ...(formData.intervaloUnidade === 'dia' ? [] : (['vezesPorDia'] as const))] as const).map((field) => (
+                              <div key={field} className={`grid gap-2 flex-shrink-0 ${field === 'vezesPorDia' ? 'w-[5.25rem]' : field === 'cadaHoras' ? 'w-[11.5rem]' : 'w-[7.5rem]'}`}>
+                                {field === 'cadaHoras' ? (
+                                  <>
+                                    <Label className="text-muted-foreground text-sm">A cada</Label>
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        max={365}
+                                        value={formData.cadaHoras}
+                                        onChange={(e) => updateFormForRm(rm, 'cadaHoras', e.target.value)}
+                                        className="border rounded-md text-center w-[4.5rem] min-w-[4.5rem]"
+                                      />
+                                      <Select
+                                        value={formData.intervaloUnidade}
+                                        onValueChange={(v) => updateFormForRm(rm, 'intervaloUnidade', v)}
+                                      >
+                                        <SelectTrigger className="w-[76px] h-9">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="hora">Hora</SelectItem>
+                                          <SelectItem value="dia">Dia</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Label className="text-muted-foreground text-sm">
+                                      {field === 'vezesPorDia' ? 'Vezes/dia' : 'Duração de dias'}
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={field === 'duracaoDias' ? 365 : 24}
+                                      value={formData[field]}
+                                      onChange={(e) => updateFormForRm(rm, field, e.target.value)}
+                                      className="border rounded-md text-center"
+                                    />
+                                  </>
+                                )}
                               </div>
                             ))}
-                            <div className="grid gap-2 min-w-[8.5rem] flex-shrink-0">
+                            <div className="grid gap-2 min-w-[7.25rem] flex-shrink-0">
                               <Label className="text-muted-foreground text-sm">Validade da Receita</Label>
                               <div className="relative flex items-center">
                                 <Input readOnly value={validadeReceita} className="bg-muted/30 border rounded-md pr-9 text-center" placeholder="dd/mm/aaaa" />
@@ -1174,23 +1295,44 @@ export default function AgendamentoMedicamentosPage() {
                         <div className="space-y-3 flex-1 min-w-0 sm:pl-6">
                           <h4 className="flex items-center gap-2 font-medium text-foreground text-sm">
                             <Clock className="h-4 w-4 text-muted-foreground" />
-                            HORÁRIOS DAS TOMADAS
+                            {formData.intervaloUnidade === 'dia' ? 'DIAS DAS TOMADAS' : 'HORÁRIOS DAS TOMADAS'}
                           </h4>
-                          {mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
+                          {formData.intervaloUnidade !== 'dia' && mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
                             <p className="text-sm text-destructive">{validacaoIntervalo.mensagem}</p>
+                          )}
+                          {formData.intervaloUnidade === 'dia' && (
+                            <div className="grid gap-2 max-w-[180px]">
+                              <Label className="text-muted-foreground text-sm">Hora da tomada</Label>
+                              <Input
+                                type="time"
+                                value={formData.horaPadraoDia || '08:00'}
+                                onChange={(e) => updateFormForRm(rm, 'horaPadraoDia', e.target.value)}
+                                className="border rounded-md text-center"
+                              />
+                            </div>
                           )}
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                             {formData.horariosTomadas.map((h, i) => (
                               <div key={i} className="grid gap-1 min-w-[110px] w-full">
-                                <Label className="text-muted-foreground text-sm">{i + 1}ª DOSE</Label>
-                                <div className="relative flex items-center">
+                                <Label className="text-muted-foreground text-sm">
+                                  {formData.intervaloUnidade === 'dia' ? `${i + 1}ª TOMADA` : `${i + 1}ª DOSE`}
+                                </Label>
+                                {formData.intervaloUnidade === 'dia' ? (
                                   <Input
-                                    type="time"
-                                    value={h}
-                                    onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
-                                    className="border rounded-md text-center"
+                                    readOnly
+                                    value={`Dia ${h} — ${formData.horaPadraoDia || '08:00'}`}
+                                    className="bg-muted/30 border rounded-md text-center"
                                   />
-                                </div>
+                                ) : (
+                                  <div className="relative flex items-center">
+                                    <Input
+                                      type="time"
+                                      value={h}
+                                      onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
+                                      className="border rounded-md text-center"
+                                    />
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1285,18 +1427,18 @@ export default function AgendamentoMedicamentosPage() {
                             />
                           </div>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-primary"
+                            className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-primary"
                             onClick={() => setAndamentoDialogRmId(String(rm.id))}
                             title="Visualizar andamento da receita"
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-destructive"
                             onClick={() => {
                               setRemoveMedicamentoTarget(rm);
                               setRemoveMedicamentoDialogOpen(true);
@@ -1319,22 +1461,52 @@ export default function AgendamentoMedicamentosPage() {
                             <Clock className="h-4 w-4 text-muted-foreground" /> INTERVALO E DURAÇÃO
                           </h4>
                           <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-                            {(['duracaoDias', 'cadaHoras', 'vezesPorDia'] as const).map((field) => (
-                              <div key={field} className="grid gap-2 w-[4.5rem] flex-shrink-0">
-                                <Label className="text-muted-foreground text-sm">
-                                  {field === 'cadaHoras' ? 'Cada (h)' : field === 'vezesPorDia' ? 'Vezes/dia' : 'Duração (d)'}
-                                </Label>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={field === 'duracaoDias' ? undefined : 24}
-                                  value={formData[field]}
-                                  onChange={(e) => updateFormForRm(rm, field, e.target.value)}
-                                  className="border rounded-md text-center"
-                                />
-                              </div>
-                            ))}
-                            <div className="grid gap-2 min-w-[8.5rem] flex-shrink-0">
+                          {(['duracaoDias', 'cadaHoras', ...(formData.intervaloUnidade === 'dia' ? [] : (['vezesPorDia'] as const))] as const).map((field) => (
+                            <div key={field} className={`grid gap-2 flex-shrink-0 ${field === 'vezesPorDia' ? 'w-[5.25rem]' : field === 'cadaHoras' ? 'w-[11.5rem]' : 'w-[7.5rem]'}`}>
+                              {field === 'cadaHoras' ? (
+                                <>
+                                  <Label className="text-muted-foreground text-sm">A cada</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={365}
+                                      value={formData.cadaHoras}
+                                      onChange={(e) => updateFormForRm(rm, 'cadaHoras', e.target.value)}
+                                      className="border rounded-md text-center w-[4.5rem] min-w-[4.5rem]"
+                                    />
+                                    <Select
+                                      value={formData.intervaloUnidade}
+                                      onValueChange={(v) => updateFormForRm(rm, 'intervaloUnidade', v)}
+                                    >
+                                      <SelectTrigger className="w-[76px] h-9">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="hora">Hora</SelectItem>
+                                        <SelectItem value="dia">Dia</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <Label className="text-muted-foreground text-sm">
+                                    {field === 'vezesPorDia' ? 'Vezes/dia' : 'Duração de dias'}
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={field === 'duracaoDias' ? 365 : 24}
+                                    value={formData[field]}
+                                    onChange={(e) => updateFormForRm(rm, field, e.target.value)}
+                                    className="border rounded-md text-center"
+                                  />
+                                </>
+                              )}
+                            </div>
+                          ))}
+                            <div className="grid gap-2 min-w-[7.25rem] flex-shrink-0">
                               <Label className="text-muted-foreground text-sm">Validade da Receita</Label>
                               <div className="relative flex items-center">
                                 <Input
@@ -1350,23 +1522,44 @@ export default function AgendamentoMedicamentosPage() {
                         </div>
                         <div className="space-y-3 flex-1 min-w-0 sm:pl-6">
                           <h4 className="flex items-center gap-2 font-medium text-foreground text-sm">
-                            <Clock className="h-4 w-4 text-muted-foreground" /> HORÁRIOS DAS TOMADAS
+                            <Clock className="h-4 w-4 text-muted-foreground" /> {formData.intervaloUnidade === 'dia' ? 'DIAS DAS TOMADAS' : 'HORÁRIOS DAS TOMADAS'}
                           </h4>
-                          {mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
+                          {formData.intervaloUnidade !== 'dia' && mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
                             <p className="text-sm text-destructive">{validacaoIntervalo.mensagem}</p>
+                          )}
+                          {formData.intervaloUnidade === 'dia' && (
+                            <div className="grid gap-2 max-w-[180px]">
+                              <Label className="text-muted-foreground text-sm">Hora da tomada</Label>
+                              <Input
+                                type="time"
+                                value={formData.horaPadraoDia || '08:00'}
+                                onChange={(e) => updateFormForRm(rm, 'horaPadraoDia', e.target.value)}
+                                className="border rounded-md text-center"
+                              />
+                            </div>
                           )}
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                             {formData.horariosTomadas.map((h, i) => (
                               <div key={i} className="grid gap-1 min-w-[110px] w-full">
-                                <Label className="text-muted-foreground text-sm">{i + 1}ª DOSE</Label>
-                                <div className="relative flex items-center">
+                                <Label className="text-muted-foreground text-sm">
+                                  {formData.intervaloUnidade === 'dia' ? `${i + 1}ª TOMADA` : `${i + 1}ª DOSE`}
+                                </Label>
+                                {formData.intervaloUnidade === 'dia' ? (
                                   <Input
-                                    type="time"
-                                    value={h}
-                                    onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
-                                    className="border rounded-md text-center"
+                                    readOnly
+                                    value={`Dia ${h} — ${formData.horaPadraoDia || '08:00'}`}
+                                    className="bg-muted/30 border rounded-md text-center"
                                   />
-                                </div>
+                                ) : (
+                                  <div className="relative flex items-center">
+                                    <Input
+                                      type="time"
+                                      value={h}
+                                      onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
+                                      className="border rounded-md text-center"
+                                    />
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1462,18 +1655,18 @@ export default function AgendamentoMedicamentosPage() {
                             />
                           </div>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-primary"
+                            className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-primary"
                             onClick={() => setAndamentoDialogRmId(String(rm.id))}
                             title="Visualizar andamento da receita"
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            className="shrink-0 h-9 w-9 border-border/70 text-muted-foreground hover:text-destructive"
                             onClick={() => {
                               setRemoveMedicamentoTarget(rm);
                               setRemoveMedicamentoDialogOpen(true);
@@ -1499,39 +1692,56 @@ export default function AgendamentoMedicamentosPage() {
                           INTERVALO E DURAÇÃO
                         </h4>
                         <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-                          <div className="grid gap-2 w-[4.5rem] flex-shrink-0">
-                            <Label className="text-muted-foreground text-sm">Duração (d)</Label>
+                          <div className="grid gap-2 w-[7.5rem] flex-shrink-0">
+                            <Label className="text-muted-foreground text-sm">Duração de dias</Label>
                             <Input
                               type="number"
                               min={1}
+                              max={365}
                               value={form.duracaoDias}
                               onChange={(e) => updateFormForRm(rm, 'duracaoDias', e.target.value)}
                               className="border rounded-md text-center"
                             />
                           </div>
-                          <div className="grid gap-2 w-[4.5rem] flex-shrink-0">
-                            <Label className="text-muted-foreground text-sm">Cada (h)</Label>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={24}
-                              value={form.cadaHoras}
-                              onChange={(e) => updateFormForRm(rm, 'cadaHoras', e.target.value)}
-                              className="border rounded-md text-center"
-                            />
+                          <div className="grid gap-2 w-[11.5rem] flex-shrink-0">
+                            <Label className="text-muted-foreground text-sm">A cada</Label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                min={1}
+                                max={365}
+                                value={form.cadaHoras}
+                                onChange={(e) => updateFormForRm(rm, 'cadaHoras', e.target.value)}
+                                className="border rounded-md text-center w-[4.5rem] min-w-[4.5rem]"
+                              />
+                              <Select
+                                value={form.intervaloUnidade}
+                                onValueChange={(v) => updateFormForRm(rm, 'intervaloUnidade', v)}
+                              >
+                                <SelectTrigger className="w-[76px] h-9">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="hora">Hora</SelectItem>
+                                  <SelectItem value="dia">Dia</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
-                          <div className="grid gap-2 w-[4.5rem] flex-shrink-0">
-                            <Label className="text-muted-foreground text-sm">Vezes/dia</Label>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={24}
-                              value={form.vezesPorDia}
-                              onChange={(e) => updateFormForRm(rm, 'vezesPorDia', e.target.value)}
-                              className="border rounded-md text-center"
-                            />
-                          </div>
-                          <div className="grid gap-2 min-w-[8.5rem] flex-shrink-0">
+                          {form.intervaloUnidade !== 'dia' && (
+                            <div className="grid gap-2 w-[5.25rem] flex-shrink-0">
+                              <Label className="text-muted-foreground text-sm">Vezes/dia</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={24}
+                                value={form.vezesPorDia}
+                                onChange={(e) => updateFormForRm(rm, 'vezesPorDia', e.target.value)}
+                                className="border rounded-md text-center"
+                              />
+                            </div>
+                          )}
+                          <div className="grid gap-2 min-w-[7.25rem] flex-shrink-0">
                             <Label className="text-muted-foreground text-sm">Validade da Receita</Label>
                             <div className="relative flex items-center">
                               <Input
@@ -1548,23 +1758,44 @@ export default function AgendamentoMedicamentosPage() {
                       <div className="space-y-3 flex-1 min-w-0 sm:pl-6">
                         <h4 className="flex items-center gap-2 font-medium text-foreground text-sm">
                           <Clock className="h-4 w-4 text-muted-foreground" />
-                          HORÁRIOS DAS TOMADAS
+                          {form.intervaloUnidade === 'dia' ? 'DIAS DAS TOMADAS' : 'HORÁRIOS DAS TOMADAS'}
                         </h4>
-                        {mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
+                        {form.intervaloUnidade !== 'dia' && mostrarAvisoIntervalo && validacaoIntervalo.mensagem && (
                           <p className="text-sm text-destructive">{validacaoIntervalo.mensagem}</p>
+                        )}
+                        {form.intervaloUnidade === 'dia' && (
+                          <div className="grid gap-2 max-w-[180px]">
+                            <Label className="text-muted-foreground text-sm">Hora da tomada</Label>
+                            <Input
+                              type="time"
+                              value={form.horaPadraoDia || '08:00'}
+                              onChange={(e) => updateFormForRm(rm, 'horaPadraoDia', e.target.value)}
+                              className="border rounded-md text-center"
+                            />
+                          </div>
                         )}
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                           {form.horariosTomadas.map((h, i) => (
                             <div key={i} className="grid gap-1 min-w-[110px] w-full">
-                              <Label className="text-muted-foreground text-sm">{i + 1}ª DOSE</Label>
-                              <div className="relative flex items-center">
+                              <Label className="text-muted-foreground text-sm">
+                                {form.intervaloUnidade === 'dia' ? `${i + 1}ª TOMADA` : `${i + 1}ª DOSE`}
+                              </Label>
+                              {form.intervaloUnidade === 'dia' ? (
                                 <Input
-                                  type="time"
-                                  value={h}
-                                  onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
-                                  className="border rounded-md text-center"
+                                  readOnly
+                                  value={`Dia ${h} — ${form.horaPadraoDia || '08:00'}`}
+                                  className="bg-muted/30 border rounded-md text-center"
                                 />
-                              </div>
+                              ) : (
+                                <div className="relative flex items-center">
+                                  <Input
+                                    type="time"
+                                    value={h}
+                                    onChange={(e) => setHorarioTomada(rm, i, e.target.value)}
+                                    className="border rounded-md text-center"
+                                  />
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
