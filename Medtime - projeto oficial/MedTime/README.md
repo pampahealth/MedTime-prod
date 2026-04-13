@@ -19,7 +19,7 @@ Raiz enxuta: só `apps/` (onde ficam as duas aplicações), READMEs e config.
 
 ## Quick start (qualquer maquina)
 
-Pre-requisito unico: Node.js + npm instalados.
+Pre-requisito unico: Node.js + npm instalados (Windows ou Linux Ubuntu).
 
 ```bash
 npm run setup
@@ -30,6 +30,7 @@ Esse fluxo:
 - instala dependencias da API e do FrontEnd com `npm ci`;
 - cria automaticamente `apps/FrontEnd/.env.local` e `apps/ProjetoRotas/.env` a partir dos arquivos `.env.example` (se ainda nao existirem);
 - sobe API e FrontEnd juntos.
+- funciona com os mesmos comandos em Windows e Linux Ubuntu.
 
 Endpoints locais:
 - FrontEnd: [http://localhost:3000](http://localhost:3000)
