@@ -1,63 +1,107 @@
-# Projeto Rotas + Front
+# MedTime+app Monorepo
 
-Monorepo com **FrontEnd** (Next.js) e **ProjetoRotas** (API Express + Supabase) para o sistema MedTime.
+Monorepo com tres frentes do projeto MedTime:
+
+- `backend-unificado/`: backend principal unificado (Express + Supabase).
+- `MedTime/`: web (Next.js) e legado parcial.
+- `api-buscas/`: API legada de integracao (em transicao).
+- `mobile/`: aplicativo Android.
 
 ## Estrutura
 
-```
-.
-├── apps/
-│   ├── FrontEnd/     # Aplicação Next.js (porta 3000)
-│   └── ProjetoRotas/ # API Express (porta 3333)
+```text
+MedTime+app/
 ├── README.md
-├── README-SINCRONIZACAO.md
-├── .env.example
-└── .gitignore
+├── docs/
+│   ├── setup/
+│   │   ├── linux.md
+│   │   ├── windows.md
+│   │   └── macos.md
+│   ├── arquitetura/
+│   │   └── visao-geral.md
+│   └── operacao/
+│       └── troubleshooting.md
+├── MedTime/
+├── backend-unificado/
+├── api-buscas/
+└── mobile/
 ```
 
-Raiz enxuta: só `apps/` (onde ficam as duas aplicações), READMEs e config.
+## Requisitos
 
-## Quick start
+- Git
+- Node.js 20 LTS (recomendado)
+- npm 10+
+- Java 17 (para Android)
+- Android Studio (para `mobile/`)
+- Python 3.10+ (para `testes/api_tripla_26.03/viewer_api_tripla.py`)
 
-### Só o FrontEnd (usa API interna / PostgREST)
+## Setup rapido
+
+1. Clone o repositorio e entre na pasta raiz.
+2. Copie os templates `.env.example` conforme a documentacao abaixo.
+3. Instale as dependencias por app.
+4. Rode cada modulo conforme necessidade.
+
+Detalhes por sistema operacional:
+
+- [Linux](./docs/setup/linux.md)
+- [Windows](./docs/setup/windows.md)
+- [macOS](./docs/setup/macos.md)
+
+## Comandos principais
+
+### Web + API interna (`MedTime/`)
 
 ```bash
-cd apps/FrontEnd
-cp .env.example .env
-# Ajuste POSTGREST_*, JWT_SECRET etc.
-pnpm install && pnpm dev
+cd MedTime
+npm run install:all
+npm run dev:api
+npm run dev:front
 ```
 
-Abre [http://localhost:3000](http://localhost:3000).
-
-### Só o Backend (ProjetoRotas)
+### API de integracao (`testes/api_tripla_26.03/`)
 
 ```bash
-cd apps/ProjetoRotas
-cp .env.example .env
-# Ajuste SUPABASE_URL, SUPABASE_ANON_KEY, JWT_SECRET
-pnpm install && pnpm dev
+cd backend-unificado
+npm install
+npm run dev
 ```
 
-API em [http://localhost:3333](http://localhost:3333). Swagger: `http://localhost:3333/api-docs`.
+### Android (`mobile/`)
 
-### Front + Backend sincronizados (proxy)
+Linux/macOS:
 
-1. Subir o ProjetoRotas (ver acima).
-2. Em `apps/FrontEnd`, no `.env`:
-   - `USE_BACKEND_PROXY=true`
-   - `API_BACKEND_URL=http://localhost:3333`
-3. Rodar o FrontEnd: `cd apps/FrontEnd && pnpm dev`.
+```bash
+cd mobile
+./gradlew assembleDebug
+```
 
-Detalhes em [README-SINCRONIZACAO.md](./README-SINCRONIZACAO.md).
+Windows (PowerShell):
 
-## Variáveis de ambiente
+```powershell
+cd mobile
+.\gradlew.bat assembleDebug
+```
 
-- **FrontEnd**: `apps/FrontEnd/.env.example` (PostgREST, auth, proxy).
-- **ProjetoRotas**: `apps/ProjetoRotas/.env.example` (Supabase, JWT).
+## Variaveis de ambiente (matriz)
 
-## Documentação
+| Modulo | Arquivo modelo | Objetivo |
+|---|---|---|
+| Monorepo raiz | `.env.example` | Referencia consolidada de variaveis comuns |
+| Web | `MedTime/apps/FrontEnd/.env.example` | PostgREST/auth/proxy |
+| API ProjetoRotas | `MedTime/apps/ProjetoRotas/.env.example` | Supabase/JWT/API |
+| Backend unificado | `backend-unificado/.env.example` | Porta, Supabase, JWT e auth |
+| API Integracao legado | `api-buscas/.env.example` | Porta, Supabase e compatibilidade antiga |
 
-- [Sincronização Front ↔ Backend](./README-SINCRONIZACAO.md)
-- FrontEnd: `apps/FrontEnd/README.md`, `apps/FrontEnd/docs/`
-- ProjetoRotas: `apps/ProjetoRotas/base_do_supabase.sql` (schema)
+## Documentacao
+
+- Arquitetura geral: [`docs/arquitetura/visao-geral.md`](./docs/arquitetura/visao-geral.md)
+- Troubleshooting e operacao: [`docs/operacao/troubleshooting.md`](./docs/operacao/troubleshooting.md)
+- Guia por SO: [`docs/setup/`](./docs/setup/)
+
+Documentacao legada detalhada do modulo `MedTime`:
+
+- [`MedTime/CODE_REVIEW.md`](./MedTime/CODE_REVIEW.md)
+- [`MedTime/DATABASE_ENTIDADES.md`](./MedTime/DATABASE_ENTIDADES.md)
+

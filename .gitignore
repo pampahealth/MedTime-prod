@@ -1,43 +1,71 @@
-# Dependencies
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# =========================
+# Dependencias
+# =========================
+**/node_modules/
+**/.pnpm-store/
 
-# Build
-dist/
-build/
-.next/
-out/
+# =========================
+# Build e cache
+# =========================
+**/dist/
+**/build/
+**/.next/
+**/out/
+**/.gradle/
+**/.kotlin/
+**/.turbo/
+**/coverage/
 
-# Environment
+# Android
+mobile/local.properties
+mobile/.cxx/
+mobile/**/captures/
+
+# =========================
+# Ambiente local
+# =========================
 .env
 .env.local
 .env.*.local
-!.env.example
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+!**/.env.example
 
-# IDE
+# =========================
+# IDE e SO
+# =========================
 .vscode/
 .idea/
+**/.idea/
+*.iml
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Logs
+# =========================
+# Logs e temporarios
+# =========================
 logs/
+**/logs/
 *.log
 npm-debug.log*
-
-# Temporary
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 tmp/
 temp/
 *.tmp
+*.pid
+*.pid.lock
 
-# Database / Prisma (Supabase usado no ProjetoRotas)
+# =========================
+# Banco e artefatos locais
+# =========================
 *.db
 *.sqlite
 *.sqlite3
